@@ -18,11 +18,18 @@ class Command(BaseCommand):
         parser.add_argument("--y", type=float)
         parser.add_argument("--width", type=float)
         parser.add_argument("--height", type=float)
+        parser.add_argument(
+            "--confirm-visual-review",
+            action="store_true",
+            help="Confirma que as coordenadas foram conferidas na imagem real do PDF.",
+        )
 
     def handle(self, *args, **options):
         template = DocumentTemplate.objects.filter(code=options["template_code"], version=options["template_version"]).first()
         if not template:
             raise CommandError("Modelo/version não encontrado.")
+        if not options["confirm_visual_review"]:
+            raise CommandError("Confirme a revisão visual do PDF com --confirm-visual-review antes de salvar regiões.")
         if options.get("mapping"):
             entries = json.loads(Path(options["mapping"]).read_text(encoding="utf-8"))
         elif options.get("field_id"):
@@ -37,6 +44,8 @@ class Command(BaseCommand):
             region = entry["region"]
             if set(region) != {"x", "y", "width", "height"} or any(float(region[key]) < 0 for key in region):
                 raise CommandError(f"Região inválida para {entry.get('field_id')}.")
+            if float(region["width"]) <= 0 or float(region["height"]) <= 0:
+                raise CommandError(f"Largura e altura devem ser maiores que zero para {entry.get('field_id')}.")
             if float(region["x"]) + float(region["width"]) > 1 or float(region["y"]) + float(region["height"]) > 1:
                 raise CommandError(f"Região fora dos limites normalizados para {entry.get('field_id')}.")
             field = TemplateField.objects.get(template=template, field_id=entry["field_id"])
@@ -45,6 +54,6 @@ class Command(BaseCommand):
 
         total = template.fields.count()
         calibrated = template.fields.exclude(region=None).count()
-        template.calibration_status = "calibrated" if calibrated == total else "partial"
+        template.calibration_status = "ready" if calibrated == total else "partial"
         template.save(update_fields=["calibration_status", "updated_at"])
         self.stdout.write(self.style.SUCCESS(f"{len(entries)} região(ões) salva(s); {calibrated}/{total} campos calibrados."))

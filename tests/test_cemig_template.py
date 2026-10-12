@@ -80,6 +80,7 @@ def test_calibracao_de_regiao_marca_modelo_parcial(tmp_path):
         y=0.1,
         width=0.2,
         height=0.03,
+        confirm_visual_review=True,
     )
     template.refresh_from_db()
     field = template.fields.get(field_id="instalacao")
