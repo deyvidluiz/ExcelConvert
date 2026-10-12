@@ -1,0 +1,31 @@
+{% load static %}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ExcelConvert{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div class="app-shell">
+    {% if user.is_authenticated %}
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark"><i data-lucide="table-2"></i></span><span>ExcelConvert</span></a>
+      <nav class="nav"><a href="{% url 'dashboard' %}"><i data-lucide="layout-dashboard"></i> Visão geral</a><a href="{% url 'documentos:upload' %}"><i data-lucide="upload-cloud"></i> Nova conversão</a><a href="{% url 'historico' %}"><i data-lucide="history"></i> Histórico</a><a href="{% url 'configuracoes' %}"><i data-lucide="sliders-horizontal"></i> Configurações</a></nav>
+      <div class="sidebar-note"><i data-lucide="shield-check"></i><span>Seus documentos ficam privados e isolados por conta.</span></div>
+      <div class="user-box"><div class="avatar">{{ user.username|first|upper }}</div><div><strong>{{ user.username }}</strong><small>{{ user.email|default:'Conta pessoal' }}</small></div><a href="{% url 'logout' %}" title="Sair"><i data-lucide="log-out"></i></a></div>
+    </aside>
+    {% endif %}
+    <main class="main-content {% if not user.is_authenticated %}main-public{% endif %}">
+      {% if user.is_authenticated %}<header class="mobile-header"><a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark"><i data-lucide="table-2"></i></span><span>ExcelConvert</span></a></header>{% endif %}
+      {% if messages %}<div class="messages">{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="{% static 'js/app.js' %}"></script><script>lucide.createIcons();</script>
+</body>
+</html>
