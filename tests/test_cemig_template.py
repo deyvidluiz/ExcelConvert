@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from reportlab.lib.pagesizes import A4
@@ -18,6 +19,7 @@ from extracao.services import ExtractionService
 from extracao.schemas import TemplateExtraction, TemplateFieldValue, template_payload_from_model
 from modelos.models import DocumentTemplate, ExcelFieldMapping, ExcelTemplate, ReferenceValue, TemplateField
 from modelos.avaliacao import evaluate_payload
+from modelos.controlled_test import prepare_page_preflight
 from modelos.services import register_cemig_template
 
 
@@ -40,6 +42,49 @@ def test_cadastra_modelo_cemig_com_nove_paginas(tmp_path):
     assert template.reference_sha256
     assert template.fields.count() >= 30
     assert template.calibration_status == "pending"
+    assert template.repeat_layout_per_page is True
+    assert set(template.fields.values_list("page_number", flat=True)) == {1}
+
+
+@pytest.mark.django_db
+def test_preflight_da_pagina_nao_chama_gemini_e_gera_artefatos(tmp_path):
+    reference = tmp_path / "TCs_Curvelo_2.pdf"
+    reference.write_bytes(nine_page_pdf())
+    template = register_cemig_template(reference_path=reference)
+    output = tmp_path / "preflight"
+
+    manifest, processed = prepare_page_preflight(pdf_path=reference, template=template, page_number=1, output_dir=output)
+
+    assert processed.startswith(b"\x89PNG")
+    assert manifest["real_api_call"] is False
+    assert manifest["fields_total"] == 32
+    assert manifest["fields_calibrated"] == 0
+    assert (output / "pagina-original.png").exists()
+    assert (output / "pagina-preprocessada.png").exists()
+    assert (output / "pagina-regioes.png").exists()
+    assert (output / "manifest.json").exists()
+
+
+@pytest.mark.django_db
+def test_calibracao_de_regiao_marca_modelo_parcial(tmp_path):
+    reference = tmp_path / "referencia.pdf"
+    reference.write_bytes(nine_page_pdf())
+    template = register_cemig_template(reference_path=reference)
+
+    call_command(
+        "calibrate_template_field",
+        template_code=template.code,
+        template_version=template.version,
+        field_id="instalacao",
+        x=0.1,
+        y=0.1,
+        width=0.2,
+        height=0.03,
+    )
+    template.refresh_from_db()
+    field = template.fields.get(field_id="instalacao")
+    assert field.region == {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.03}
+    assert template.calibration_status == "partial"
 
 
 @pytest.mark.django_db

@@ -37,7 +37,7 @@ Crie uma chave no [Google AI Studio](https://aistudio.google.com/app/apikey) e e
 
 ```dotenv
 GEMINI_API_KEY=sua-chave-aqui
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-3.1-flash-lite
 ```
 
 Para consultar a disponibilidade do modelo sem gerar conteúdo:
@@ -46,7 +46,7 @@ Para consultar a disponibilidade do modelo sem gerar conteúdo:
 python manage.py check_gemini_model
 ```
 
-Nunca versione `.env`. O modelo pode ser alterado por variável, mas o padrão é `gemini-2.5-flash-lite`. O token count retornado pela API é salvo no documento. A estimativa inicial usa US$ 0,10 por milhão de tokens e o câmbio configurável em `USD_TO_BRL`; revise os preços do seu contrato antes de usar os valores para faturamento.
+Nunca versione `.env`. O modelo pode ser alterado por variável, mas o padrão é `gemini-3.1-flash-lite`. A consulta de metadados confirma a existência e os limites publicados do modelo, mas não confirma quota gratuita nem saldo da conta; isso precisa ser verificado no AI Studio/Google Cloud. O token count retornado pela API é salvo no documento. A estimativa inicial usa US$ 0,10 por milhão de tokens e o câmbio configurável em `USD_TO_BRL`; revise os preços do seu contrato antes de usar os valores para faturamento.
 
 ## Variáveis principais
 
@@ -118,6 +118,38 @@ python manage.py import_excel_template \
 ```
 
 `mapeamento.json` usa objetos no formato `{"field_id":"numero_serie","sheet_name":"Dados","cell_or_range":"B4"}`. O preenchimento mantém estilos, células mescladas, larguras e fórmulas não mapeadas.
+
+### Preflight controlado da ficha CEMIG
+
+O comando abaixo começa pela página 1, renderiza o PDF, cria versões original/pré-processada/overlay e mostra uma estimativa heurística. Sem a flag de autorização, ele não chama o Gemini:
+
+```bash
+python manage.py inspect_cemig_page --pdf TCs_Curvelo_2.pdf --page 1
+```
+
+Revise `media/preflight/cemig-tc-comissionamento/page-1/pagina-regioes.png`. Regiões não calibradas ficam explicitamente pendentes. Após revisar coordenadas reais, salve-as com `calibrate_template_field` usando um JSON como:
+
+```json
+[
+  {"field_id":"numero_serie","region":{"x":0.20,"y":0.12,"width":0.25,"height":0.03}}
+]
+```
+
+```bash
+python manage.py calibrate_template_field \
+  --template-code cemig-tc-comissionamento \
+  --mapping regioes-cemig.json
+```
+
+Somente depois da revisão visual e autorização explícita, a primeira chamada real pode ser feita com `--authorize-real-call`. O comando não repete chamadas automaticamente e gera `extracao-real.json`, `extracao-real.xlsx` e um manifesto com tokens retornados pela API:
+
+```bash
+python manage.py inspect_cemig_page \
+  --pdf TCs_Curvelo_2.pdf --page 1 \
+  --authorize-real-call
+```
+
+Sem essa flag, a rotina é inteiramente local e não apresenta uma extração simulada como resultado real.
 
 Referências humanas podem ser cadastradas no admin em `ReferenceValue` e avaliadas por página/campo com `evaluate_document`. A saída do Gemini nunca é usada como verdade absoluta.
 

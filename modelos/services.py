@@ -18,6 +18,7 @@ def register_cemig_template(*, reference_path=None, created_by=None, version="1.
             "issuer": "CEMIG",
             "description": "Modelo versionado para fichas de ensaios de comissionamento de transformador de corrente.",
             "page_count": 9,
+            "repeat_layout_per_page": True,
             "calibration_status": "pending",
             "created_by": created_by,
         },
@@ -25,13 +26,17 @@ def register_cemig_template(*, reference_path=None, created_by=None, version="1.
     template.name = DEFAULT_TEMPLATE_NAME
     template.issuer = "CEMIG"
     template.page_count = 9
+    template.repeat_layout_per_page = True
     if created_by and not template.created_by_id:
         template.created_by = created_by
     if reference_path:
         path = Path(reference_path)
         data = path.read_bytes()
         try:
-            import fitz
+            try:
+                import pymupdf as fitz
+            except ImportError:
+                import fitz
 
             reference_page_count = len(fitz.open(stream=data, filetype="pdf"))
         except Exception:

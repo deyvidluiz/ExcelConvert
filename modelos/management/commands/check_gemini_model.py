@@ -13,3 +13,8 @@ class Command(BaseCommand):
         except GeminiExtractionError as exc:
             raise CommandError(str(exc)) from exc
         self.stdout.write(self.style.SUCCESS(f"Modelo disponível: {info.get('name')} — {info.get('display_name')}"))
+        if info.get("input_token_limit"):
+            self.stdout.write(f"Limite de entrada: {info['input_token_limit']} tokens")
+        if info.get("output_token_limit"):
+            self.stdout.write(f"Limite de saída: {info['output_token_limit']} tokens")
+        self.stdout.write("Consulta de metadados concluída; nenhuma geração foi executada.")

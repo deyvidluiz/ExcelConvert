@@ -1,4 +1,4 @@
-PROMPT_VERSION = "2026-10-12.1"
+PROMPT_VERSION = "2026-10-12.2"
 
 EXTRACTION_PROMPT = (
     "Você é um sistema de transcrição visual de tabelas. Analise apenas o conteúdo observado no documento. "

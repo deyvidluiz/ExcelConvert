@@ -14,6 +14,10 @@ class DocumentTemplate(models.Model):
     version = models.CharField(max_length=30, default="1.0.0")
     description = models.TextField(blank=True)
     page_count = models.PositiveIntegerField(default=1)
+    repeat_layout_per_page = models.BooleanField(
+        default=False,
+        help_text="Quando ativo, o catálogo de campos se repete em cada página do documento.",
+    )
     reference_pdf = models.FileField(upload_to="template_references/%Y/%m/%d/", blank=True)
     reference_sha256 = models.CharField(max_length=64, blank=True)
     calibration_status = models.CharField(max_length=30, default="pending")
@@ -68,7 +72,7 @@ class TemplateField(models.Model):
 
     @property
     def schema_for_prompt(self):
-        return {
+        schema = {
             "id": self.field_id,
             "label": self.name,
             "section": self.section,
@@ -77,6 +81,9 @@ class TemplateField(models.Model):
             "type": self.expected_type,
             "required": self.required,
         }
+        if self.region:
+            schema["region"] = self.region
+        return schema
 
 
 class ExcelTemplate(models.Model):
