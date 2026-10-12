@@ -60,7 +60,7 @@ class ExtractionService:
             return cached.payload, cached.token_count, cached.source, {
                 "input_tokens": cached.input_token_count,
                 "output_tokens": cached.output_token_count,
-                "api_calls": cached.api_call_count,
+                "api_calls": 0,
             }
 
         if document.mime_type == "application/pdf" and not document.template_id:
@@ -136,10 +136,14 @@ class ExtractionService:
 
     @staticmethod
     def _ensure_budget(document):
-        month_total = Document.objects.filter(
+        month_documents = Document.objects.filter(
             user=document.user,
             created_at__year=document.created_at.year,
             created_at__month=document.created_at.month,
-        ).aggregate(total=Sum("estimated_cost_usd"))["total"] or Decimal("0")
+        )
+        month_total = month_documents.aggregate(total=Sum("estimated_cost_usd"))["total"] or Decimal("0")
         if month_total >= Decimal(str(settings.MAX_MONTHLY_ESTIMATED_USD)):
             raise RuntimeError("O limite mensal estimado foi atingido; ajuste MAX_MONTHLY_ESTIMATED_USD antes de continuar.")
+        month_calls = month_documents.aggregate(total=Sum("api_call_count"))["total"] or 0
+        if month_calls >= settings.MAX_MONTHLY_API_CALLS:
+            raise RuntimeError("O limite mensal de chamadas Gemini foi atingido; ajuste MAX_MONTHLY_API_CALLS antes de continuar.")

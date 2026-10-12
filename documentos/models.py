@@ -39,6 +39,21 @@ class Document(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     processed_at = models.DateTimeField(null=True, blank=True)
 
+    def delete(self, *args, **kwargs):
+        stored_files = []
+        for field_name in ("file", "preprocessed_file"):
+            field_file = getattr(self, field_name, None)
+            if field_file and field_file.name:
+                stored_files.append((field_file.storage, field_file.name))
+        if self.pk:
+            for preview in self.field_previews.all():
+                if preview.image and preview.image.name:
+                    stored_files.append((preview.image.storage, preview.image.name))
+        result = super().delete(*args, **kwargs)
+        for storage, name in stored_files:
+            storage.delete(name)
+        return result
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["user", "status"]), models.Index(fields=["user", "created_at"])]

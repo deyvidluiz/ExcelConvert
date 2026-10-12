@@ -1,4 +1,5 @@
 from django import forms
+from django.conf import settings
 
 from modelos.models import DocumentTemplate
 
@@ -35,6 +36,8 @@ class MultiUploadForm(forms.Form):
         files = self.files.getlist("files")
         if not files:
             raise forms.ValidationError("Selecione pelo menos um arquivo.")
+        if len(files) > settings.MAX_UPLOAD_FILES:
+            raise forms.ValidationError(f"Envie no máximo {settings.MAX_UPLOAD_FILES} arquivos por vez.")
         errors = []
         inspected = []
         for uploaded in files:

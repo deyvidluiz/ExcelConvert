@@ -71,7 +71,6 @@ def serve_field_preview(request, pk, field_id):
 @require_POST
 def delete_document(request, pk):
     document = get_object_or_404(Document, pk=pk, user=request.user)
-    document.file.delete(save=False)
     document.delete()
     messages.success(request, "Documento excluído.")
     return redirect("historico")
