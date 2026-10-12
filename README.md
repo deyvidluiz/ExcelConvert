@@ -40,6 +40,12 @@ GEMINI_API_KEY=sua-chave-aqui
 GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
+Para consultar a disponibilidade do modelo sem gerar conteúdo:
+
+```bash
+python manage.py check_gemini_model
+```
+
 Nunca versione `.env`. O modelo pode ser alterado por variável, mas o padrão é `gemini-2.5-flash-lite`. O token count retornado pela API é salvo no documento. A estimativa inicial usa US$ 0,10 por milhão de tokens e o câmbio configurável em `USD_TO_BRL`; revise os preços do seu contrato antes de usar os valores para faturamento.
 
 ## Variáveis principais
@@ -87,6 +93,33 @@ Use Nginx ou outro proxy TLS, mantenha `MEDIA_ROOT` privado com backup e configu
 - `extracao`: schemas Pydantic, prompt, PDF local e Gemini;
 - `validacao`: regras determinísticas e editor de células;
 - `exportacao`: XLSX, DOCX e PDF.
+
+## Modelos de fichas e Excel
+
+Registre a ficha CEMIG usando o PDF de referência local:
+
+```bash
+python manage.py register_cemig_template --reference TCs_Curvelo_2.pdf --template-version 1.0.0
+```
+
+O comando cria uma versão com 9 páginas, catálogo de `field_id`s estáveis e o PDF original armazenado como referência privada. As regiões normalizadas ficam com status `pending` até uma calibração manual; isso evita inventar coordenadas a partir de um scan não legível automaticamente.
+
+Para cadastrar outra ficha, crie um comando/serviço equivalente em `modelos/catalog.py` com novos `field_id`s, seções, páginas, tipo esperado e regras. Registre cada alteração como nova versão (`1.1.0`, por exemplo), sem alterar os campos da versão anterior. O admin permite revisar regiões, obrigatoriedade e mapeamentos.
+
+Para importar um Excel de destino:
+
+```bash
+python manage.py import_excel_template \
+  --template-code cemig-tc-comissionamento \
+  --file modelo_cliente.xlsx \
+  --name "Planilha CEMIG" \
+  --template-version 1.0.0 \
+  --mapping mapeamento.json
+```
+
+`mapeamento.json` usa objetos no formato `{"field_id":"numero_serie","sheet_name":"Dados","cell_or_range":"B4"}`. O preenchimento mantém estilos, células mescladas, larguras e fórmulas não mapeadas.
+
+Referências humanas podem ser cadastradas no admin em `ReferenceValue` e avaliadas por página/campo com `evaluate_document`. A saída do Gemini nunca é usada como verdade absoluta.
 
 ## Limitações conhecidas e próximos passos
 
