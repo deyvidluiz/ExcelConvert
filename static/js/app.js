@@ -29,7 +29,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const page = Number(table.dataset.pageIndex);
         const tableIndex = Number(table.dataset.tableIndex);
         table.querySelectorAll('[data-kind="header"]').forEach(cell => { payload.pages[page].tables[tableIndex].headers[Number(cell.dataset.colIndex)].value = cell.innerText.trim() || null; });
-        table.querySelectorAll('[data-kind="cell"]').forEach(cell => { payload.pages[page].tables[tableIndex].rows[Number(cell.dataset.rowIndex)][Number(cell.dataset.colIndex)].value = cell.innerText.trim() || null; });
+        table.querySelectorAll('[data-kind="cell"]').forEach(cell => {
+          const value = cell.innerText.trim() || null;
+          payload.pages[page].tables[tableIndex].rows[Number(cell.dataset.rowIndex)][Number(cell.dataset.colIndex)].value = value;
+          if (cell.dataset.fieldId && Array.isArray(payload.template_fields)) {
+            const field = payload.template_fields.find(item => item.field_id === cell.dataset.fieldId);
+            if (field) field.value = value;
+          }
+        });
       });
       document.querySelector('#payload').value = JSON.stringify(payload);
       const indicator = document.querySelector('#save-indicator');

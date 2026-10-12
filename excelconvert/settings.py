@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "extracao",
     "validacao",
     "exportacao",
+    "modelos",
 ]
 
 MIDDLEWARE = [

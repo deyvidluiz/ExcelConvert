@@ -7,9 +7,6 @@ from django.conf import settings
 from PIL import Image, UnidentifiedImageError
 
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png"}
-
-
 def _read_uploaded(uploaded):
     uploaded.seek(0)
     data = uploaded.read()

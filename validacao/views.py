@@ -10,8 +10,8 @@ from .services import validate_payload
 
 
 def _load_payload(document):
-    from extracao.services import ExtractionService
-
+    if document.extraction_payload:
+        return document.extraction_payload
     cache = ExtractionCache.objects.filter(sha256=document.sha256).order_by("-created_at").first()
     if cache:
         return cache.payload
@@ -29,10 +29,8 @@ def editor(request, pk):
         try:
             candidate = json.loads(request.POST.get("payload", "{}"))
             candidate["alerts"] = list(dict.fromkeys(candidate.get("alerts", []) + validate_payload(candidate)))
-            cache = ExtractionCache.objects.filter(sha256=document.sha256).order_by("-created_at").first()
-            if cache:
-                cache.payload = candidate
-                cache.save(update_fields=["payload"])
+            document.extraction_payload = candidate
+            document.save(update_fields=["extraction_payload", "updated_at"])
             payload = candidate
             messages.success(request, "Correções salvas sem nova chamada à IA.")
         except (json.JSONDecodeError, TypeError, AttributeError):

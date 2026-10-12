@@ -10,6 +10,7 @@ from django.http import JsonResponse
 from django.shortcuts import redirect, render
 
 from documentos.models import Document
+from modelos.models import DocumentTemplate
 
 from .forms import SignUpForm
 
@@ -22,6 +23,9 @@ def dashboard(request):
         "total_documents": documents.count(),
         "total_pages": documents.aggregate(total=Sum("page_count"))["total"] or 0,
         "total_tokens": documents.aggregate(total=Sum("token_count"))["total"] or 0,
+        "input_tokens": documents.aggregate(total=Sum("input_token_count"))["total"] or 0,
+        "output_tokens": documents.aggregate(total=Sum("output_token_count"))["total"] or 0,
+        "api_calls": documents.aggregate(total=Sum("api_call_count"))["total"] or 0,
         "total_usd": documents.aggregate(total=Sum("estimated_cost_usd"))["total"] or 0,
         "total_brl": documents.aggregate(total=Sum("estimated_cost_brl"))["total"] or 0,
     }
@@ -35,7 +39,7 @@ def history(request):
 
 @login_required
 def settings_page(request):
-    return render(request, "core/settings.html", {"model": settings.GEMINI_MODEL, "has_key": bool(os.getenv("GEMINI_API_KEY"))})
+    return render(request, "core/settings.html", {"model": settings.GEMINI_MODEL, "has_key": bool(os.getenv("GEMINI_API_KEY")), "template_count": DocumentTemplate.objects.filter(is_active=True).count()})
 
 
 def signup(request):

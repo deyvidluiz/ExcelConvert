@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from extracao.services import ExtractionService
+from modelos.models import FieldRegionPreview
 
 from .forms import MultiUploadForm
 from .models import Document
@@ -26,6 +27,7 @@ def upload(request):
                     size_bytes=inspected["size_bytes"],
                     sha256=inspected["sha256"],
                     page_count=inspected["page_count"],
+                    template=form.cleaned_data.get("template"),
                 )
             )
         messages.success(request, f"{len(created)} documento(s) recebido(s). Confirme o processamento.")
@@ -57,6 +59,12 @@ def serve_document(request, pk):
     response = FileResponse(document.file.open("rb"), content_type=document.mime_type)
     response["Content-Disposition"] = f'inline; filename="{document.original_name}"'
     return response
+
+
+@login_required
+def serve_field_preview(request, pk, field_id):
+    preview = get_object_or_404(FieldRegionPreview, document__pk=pk, document__user=request.user, field__field_id=field_id)
+    return FileResponse(preview.image.open("rb"), content_type="image/png")
 
 
 @login_required

@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
@@ -14,6 +14,8 @@ from docx.shared import Inches
 
 
 def extraction_for(document):
+    if document.extraction_payload:
+        return document.extraction_payload
     from documentos.models import ExtractionCache
 
     cache = ExtractionCache.objects.filter(sha256=document.sha256).order_by("-created_at").first()
@@ -68,6 +70,25 @@ def build_xlsx(payload):
         sheet.freeze_panes = "A4"
     if not workbook.worksheets:
         workbook.create_sheet("Sem tabelas")
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
+
+
+def build_xlsx_from_template(payload, excel_template):
+    """Preenche um XLSX cadastrado sem reconstruir sua formatação ou fórmulas."""
+    workbook = load_workbook(BytesIO(excel_template.workbook.read()))
+    mappings = {mapping.field.field_id: mapping for mapping in excel_template.mappings.select_related("field")}
+    for field in payload.get("template_fields", []):
+        mapping = mappings.get(field.get("field_id"))
+        if not mapping or mapping.sheet_name not in workbook.sheetnames:
+            continue
+        address = mapping.cell_or_range.split(":", 1)[0]
+        cell = workbook[mapping.sheet_name][address]
+        cell.value = field.get("value")
+        cell.number_format = "@"
+        cell.quotePrefix = True
     output = BytesIO()
     workbook.save(output)
     output.seek(0)

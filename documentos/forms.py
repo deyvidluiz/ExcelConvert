@@ -1,5 +1,7 @@
 from django import forms
 
+from modelos.models import DocumentTemplate
+
 from .services import inspect_upload
 
 
@@ -18,6 +20,16 @@ class MultipleFileField(forms.FileField):
 
 class MultiUploadForm(forms.Form):
     files = MultipleFileField(widget=MultipleFileInput(attrs={"multiple": True}), label="Documentos")
+    template = forms.ModelChoiceField(
+        queryset=DocumentTemplate.objects.none(),
+        required=False,
+        empty_label="Detecção genérica (sem modelo)",
+        label="Modelo da ficha",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["template"].queryset = DocumentTemplate.objects.filter(is_active=True).order_by("name", "-version")
 
     def clean_files(self):
         files = self.files.getlist("files")

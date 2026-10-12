@@ -1,5 +1,10 @@
 def validate_payload(payload):
     alerts = []
+    for field in payload.get("template_fields", []):
+        if field.get("ambiguous"):
+            alerts.append(f"Campo {field.get('name') or field.get('field_id')}: leitura ambígua; confirme na imagem original.")
+        if field.get("required") and field.get("value") in (None, ""):
+            alerts.append(f"Campo obrigatório {field.get('name') or field.get('field_id')} está vazio.")
     for page in payload.get("pages", []):
         for table_index, table in enumerate(page.get("tables", []), start=1):
             width = len(table.get("headers", []))
