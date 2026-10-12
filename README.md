@@ -63,6 +63,10 @@ Nunca versione `.env`. O modelo pode ser alterado por variável, mas o padrão �
 | `MAX_MONTHLY_ESTIMATED_USD` | trava preventiva de orçamento por usuário |
 | `USD_TO_BRL` | câmbio usado na exibição |
 | `MEDIA_ROOT` | diretório privado dos uploads |
+| `CSRF_TRUSTED_ORIGINS` | origens HTTPS autorizadas separadas por vírgula |
+| `MAX_UPLOAD_FILES` | máximo de arquivos por envio |
+| `MAX_MONTHLY_API_CALLS` | limite preventivo de chamadas Gemini por usuário/mês |
+| `DOCUMENT_RETENTION_DAYS` | prazo de retenção antes da exclusão automática |
 
 ## Testes e checks
 
@@ -84,7 +88,7 @@ python manage.py collectstatic --noinput
 gunicorn excelconvert.wsgi:application --bind 0.0.0.0:8000
 ```
 
-Use Nginx ou outro proxy TLS, mantenha `MEDIA_ROOT` privado com backup e configure `DATABASE_URL` para PostgreSQL. Em produção, substitua o armazenamento local de mídia por volume privado ou storage compatível antes de escalar horizontalmente.
+Para Render, use `render.yaml` e `build.sh`. O blueprint configura Gunicorn, PostgreSQL, WhiteNoise e um disco persistente privado em `MEDIA_ROOT`; veja [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md). O comando `register_cemig_template` inicializa os 32 campos sem versionar PDF privado. Em produção, não use SQLite nem o filesystem efêmero do serviço.
 
 ## Arquitetura
 
@@ -138,7 +142,8 @@ Revise `media/preflight/cemig-tc-comissionamento/page-1/pagina-regioes.png`. Reg
 ```bash
 python manage.py calibrate_template_field \
   --template-code cemig-tc-comissionamento \
-  --mapping regioes-cemig.json
+  --mapping regioes-cemig.json \
+  --confirm-visual-review
 ```
 
 Somente depois da revisão visual e autorização explícita, a primeira chamada real pode ser feita com `--authorize-real-call`. O comando não repete chamadas automaticamente e gera `extracao-real.json`, `extracao-real.xlsx` e um manifesto com tokens retornados pela API:

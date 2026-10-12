@@ -8,6 +8,8 @@ db.sqlite3
 media/
 staticfiles/
 *.sqlite3-journal
+*.pdf
+preflight-review/
 .DS_Store
 .idea/
 .vscode/
