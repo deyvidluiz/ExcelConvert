@@ -1,14 +1,112 @@
 import json
+import logging
 import os
+import re
 
 from django.conf import settings
 
 from .prompts import EXTRACTION_PROMPT
 from .schemas import DocumentExtraction, TemplateExtraction, payload_from_model, template_payload_from_model
 
+logger = logging.getLogger(__name__)
+
 
 class GeminiExtractionError(RuntimeError):
-    pass
+    """Falha segura e classificável na integração com a Gemini."""
+
+    def __init__(
+        self,
+        user_message,
+        *,
+        error_code="unknown",
+        http_status=None,
+        provider_status=None,
+        diagnostic_message="",
+    ):
+        super().__init__(user_message)
+        self.user_message = user_message
+        self.error_code = error_code
+        self.http_status = http_status
+        self.provider_status = provider_status
+        self.diagnostic_message = diagnostic_message
+
+
+def _sanitize_provider_message(value):
+    """Mantém diagnóstico útil sem registrar credenciais, headers ou conteúdo do arquivo."""
+    if not value:
+        return ""
+    message = str(value)
+    message = re.sub(
+        r"(?i)(authorization|x-goog-api-key|api[-_ ]?key|secret|token)\s*[:=]\s*[^,;\s]+",
+        r"\1=[REDACTED]",
+        message,
+    )
+    message = re.sub(r"(?i)\b(?:AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z._-]{10,})\b", "[REDACTED]", message)
+    message = re.sub(r"(?i)(document|filename|file|prompt)\s*[:=]\s*[^,;]+", r"\1=[REDACTED]", message)
+    message = re.sub(r"\s+", " ", message).strip()
+    return message[:240]
+
+
+def _log_failure(*, operation, model, error_code, http_status, provider_status, message):
+    logger.error(
+        "Gemini %s failed: model=%s http_status=%s error_code=%s provider_status=%s message=%s",
+        operation,
+        model,
+        http_status if http_status is not None else "-",
+        error_code or "-",
+        provider_status or "-",
+        _sanitize_provider_message(message) or "-",
+    )
+
+
+def _classify_exception(exc, *, model, operation):
+    http_status = getattr(exc, "code", None)
+    if not isinstance(http_status, int):
+        http_status = None
+    provider_status = getattr(exc, "status", None)
+    provider_status = str(provider_status) if provider_status else None
+    provider_message = getattr(exc, "message", None) or str(exc)
+    class_name = exc.__class__.__name__.lower()
+    status_text = (provider_status or "").upper()
+    text = _sanitize_provider_message(provider_message)
+
+    if http_status in {401} or "unauthenticated" in status_text:
+        error_code = provider_status or "unauthenticated"
+        user_message = "A credencial da Gemini foi recusada. Verifique a GEMINI_API_KEY configurada."
+    elif http_status in {403} or "permission_denied" in status_text:
+        error_code = provider_status or "permission_denied"
+        user_message = "A credencial da Gemini não tem permissão para usar este modelo."
+    elif http_status == 404 or "not_found" in status_text:
+        error_code = provider_status or "not_found"
+        user_message = f"O modelo Gemini configurado ({model}) não está disponível para geração nesta conta."
+    elif http_status == 429 or "resource_exhausted" in status_text or "rate" in class_name:
+        error_code = provider_status or "resource_exhausted"
+        user_message = "O limite de uso da Gemini foi atingido. Aguarde ou revise a quota antes de tentar novamente."
+    elif http_status in {408, 504} or "deadline_exceeded" in status_text or "timeout" in class_name:
+        error_code = provider_status or "timeout"
+        user_message = "A Gemini demorou para responder. Tente novamente sem alterar o documento."
+    elif "connection" in class_name or "connect" in class_name or "network" in class_name:
+        error_code = provider_status or "connection_error"
+        user_message = "Não foi possível conectar ao serviço Gemini. Verifique a rede e tente novamente."
+    else:
+        error_code = provider_status or class_name or "gemini_error"
+        user_message = "Não foi possível concluir a extração com a Gemini. Verifique a configuração e tente novamente."
+
+    _log_failure(
+        operation=operation,
+        model=model,
+        error_code=error_code,
+        http_status=http_status,
+        provider_status=provider_status,
+        message=text or user_message,
+    )
+    return GeminiExtractionError(
+        user_message,
+        error_code=error_code,
+        http_status=http_status,
+        provider_status=provider_status,
+        diagnostic_message=text,
+    )
 
 
 class GeminiExtractor:
@@ -57,7 +155,21 @@ class GeminiExtractor:
     def _generate(self, *, data, mime_type, prompt, schema):
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise GeminiExtractionError("GEMINI_API_KEY não configurada; a operação paga não foi iniciada.")
+            error = GeminiExtractionError(
+                "A extração com IA não está configurada neste ambiente. Solicite ao administrador a configuração da Gemini.",
+                error_code="missing_api_key",
+                diagnostic_message="GEMINI_API_KEY is not configured",
+            )
+            _log_failure(
+                operation="generate_content",
+                model=self.model,
+                error_code=error.error_code,
+                http_status=None,
+                provider_status=None,
+                message=error.diagnostic_message,
+            )
+            raise error
+
         try:
             from google import genai
             from google.genai import types
@@ -74,21 +186,29 @@ class GeminiExtractor:
             )
             self.last_metrics = {**self._usage_metrics(getattr(response, "usage_metadata", None)), "api_calls": 1}
             return response
+        except GeminiExtractionError:
+            raise
         except Exception as exc:
-            message = str(exc)
-            if "no longer available to new users" in message or "NOT_FOUND" in message:
-                raise GeminiExtractionError(f"O modelo configurado ({self.model}) não está disponível para esta conta. O sistema não fará fallback automático para outro modelo.") from exc
-            if "429" in message or "RESOURCE_EXHAUSTED" in message:
-                raise GeminiExtractionError("O limite do Gemini foi atingido. Aguarde e tente novamente mais tarde.") from exc
-            raise GeminiExtractionError("Não foi possível concluir a extração com o Gemini.") from exc
+            raise _classify_exception(exc, model=self.model, operation="generate_content") from exc
 
-    @staticmethod
-    def _parse(response, schema):
+    def _parse(self, response, schema):
         try:
             parsed = getattr(response, "parsed", None)
             return parsed if isinstance(parsed, schema) else schema.model_validate(parsed if parsed is not None else json.loads(response.text))
         except Exception as exc:
-            raise GeminiExtractionError("O Gemini retornou uma estrutura inválida; nada foi exportado.") from exc
+            _log_failure(
+                operation="parse_response",
+                model=self.model,
+                error_code="invalid_json",
+                http_status=None,
+                provider_status=None,
+                message=f"{exc.__class__.__name__}: Gemini response was not valid for the requested schema",
+            )
+            raise GeminiExtractionError(
+                "A Gemini respondeu em formato inválido. Nenhum dado foi exportado; tente novamente.",
+                error_code="invalid_json",
+                diagnostic_message=exc.__class__.__name__,
+            ) from exc
 
     @staticmethod
     def _usage_metrics(usage):
@@ -99,21 +219,57 @@ class GeminiExtractor:
 
 
 def check_model_availability(*, api_key=None, model=None):
-    """Consulta metadados do modelo sem gerar conteúdo e sem consumir tokens."""
+    """Consulta metadados e verifica se o recurso declara suporte a generateContent."""
+    requested_model = model or settings.GEMINI_MODEL
     key = api_key or os.getenv("GEMINI_API_KEY")
     if not key:
-        raise GeminiExtractionError("GEMINI_API_KEY não configurada no ambiente de execução.")
+        error = GeminiExtractionError(
+            "GEMINI_API_KEY não configurada no ambiente de execução.",
+            error_code="missing_api_key",
+            diagnostic_message="GEMINI_API_KEY is not configured",
+        )
+        _log_failure(
+            operation="model_metadata",
+            model=requested_model,
+            error_code=error.error_code,
+            http_status=None,
+            provider_status=None,
+            message=error.diagnostic_message,
+        )
+        raise error
     try:
         from google import genai
 
         client = genai.Client(api_key=key)
-        info = client.models.get(model=model or settings.GEMINI_MODEL)
+        info = client.models.get(model=requested_model)
+        supported_actions = list(getattr(info, "supported_actions", None) or [])
+        if "generateContent" not in supported_actions:
+            error = GeminiExtractionError(
+                f"O modelo configurado ({requested_model}) não declara suporte à geração de conteúdo.",
+                error_code="generation_not_supported",
+                http_status=404,
+                provider_status="NOT_FOUND",
+                diagnostic_message="Model metadata does not include generateContent",
+            )
+            _log_failure(
+                operation="model_metadata",
+                model=requested_model,
+                error_code=error.error_code,
+                http_status=error.http_status,
+                provider_status=error.provider_status,
+                message=error.diagnostic_message,
+            )
+            raise error
         return {
-            "name": getattr(info, "name", model or settings.GEMINI_MODEL),
+            "name": getattr(info, "name", requested_model),
             "display_name": getattr(info, "display_name", ""),
             "input_token_limit": getattr(info, "input_token_limit", None),
             "output_token_limit": getattr(info, "output_token_limit", None),
             "thinking": getattr(info, "thinking", None),
+            "supported_actions": supported_actions,
+            "generation_supported": True,
         }
+    except GeminiExtractionError:
+        raise
     except Exception as exc:
-        raise GeminiExtractionError("Não foi possível verificar a disponibilidade do modelo Gemini configurado.") from exc
+        raise _classify_exception(exc, model=requested_model, operation="model_metadata") from exc

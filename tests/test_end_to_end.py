@@ -38,6 +38,7 @@ def test_fluxo_integrado_mockado_login_upload_editor_excel_historico(client, use
     assert response.status_code == 302
     document = Document.objects.get(user=user)
     assert document.template_id == template.pk
+    Document.objects.filter(pk=document.pk).update(error_message="mensagem residual")
 
     class FakeExtractor:
         calls = 0
@@ -92,6 +93,7 @@ def test_fluxo_integrado_mockado_login_upload_editor_excel_historico(client, use
     assert fake.calls == 1
     assert document.input_token_count == 210
     assert document.output_token_count == 55
+    assert document.error_message == ""
 
     response = client.get(reverse("validacao:editor", args=[document.pk]))
     assert response.status_code == 200

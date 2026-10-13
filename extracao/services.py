@@ -9,7 +9,7 @@ from django.utils import timezone
 from documentos.models import Document, ExtractionCache
 from validacao.services import validate_payload
 
-from .gemini_service import GeminiExtractor
+from .gemini_service import GeminiExtractionError, GeminiExtractor
 from .local_pdf import extract_pdf_tables
 from .preprocessamento import crop_region, preprocess_image
 from .prompts import PROMPT_VERSION
@@ -41,11 +41,11 @@ class ExtractionService:
             document.estimated_cost_brl = document.estimated_cost_usd * Decimal(str(settings.USD_TO_BRL))
             document.status = Document.Status.READY
             document.processed_at = timezone.now()
-            document.save(update_fields=["model", "token_count", "input_token_count", "output_token_count", "api_call_count", "pages_processed", "estimated_cost_usd", "estimated_cost_brl", "extraction_payload", "status", "processed_at", "updated_at"])
+            document.save(update_fields=["model", "token_count", "input_token_count", "output_token_count", "api_call_count", "pages_processed", "estimated_cost_usd", "estimated_cost_brl", "extraction_payload", "error_message", "status", "processed_at", "updated_at"])
             return payload
         except Exception as exc:
             document.status = Document.Status.FAILED
-            document.error_message = str(exc)
+            document.error_message = exc.user_message if isinstance(exc, GeminiExtractionError) else "Falha interna ao processar o documento. Tente novamente ou solicite suporte."
             document.retry_count += 1
             document.save(update_fields=["status", "error_message", "retry_count", "updated_at"])
             raise

@@ -1,14 +1,19 @@
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
+from extracao.gemini_service import GeminiExtractionError
 from extracao.services import ExtractionService
 from modelos.models import FieldRegionPreview
 
 from .forms import MultiUploadForm
 from .models import Document
+
+logger = logging.getLogger(__name__)
 
 
 @login_required
@@ -45,9 +50,16 @@ def process_document(request, pk):
             ExtractionService().process(document, paid_confirmed=paid_confirmed)
             messages.success(request, "Documento processado. Revise os dados antes de exportar.")
             return redirect("validacao:editor", pk=document.pk)
-        except Exception as exc:
+        except GeminiExtractionError as exc:
             document.refresh_from_db()
-            messages.error(request, str(exc))
+            messages.error(request, exc.user_message)
+        except Exception as exc:
+            logger.error(
+                "Unexpected document processing failure: exception_type=%s",
+                exc.__class__.__name__,
+            )
+            document.refresh_from_db()
+            messages.error(request, "Não foi possível processar o documento. Tente novamente ou solicite suporte.")
     return render(request, "documentos/processing.html", {"document": document})
 
 

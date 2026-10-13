@@ -110,13 +110,14 @@ def test_gemini_estruturado_com_modelo_e_metricas_mockadas(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "mocked-key")
     with patch("google.genai.Client") as client_class:
         client_class.return_value.models.generate_content.return_value = response
-        extractor = GeminiExtractor(model="gemini-2.5-flash-lite")
+        extractor = GeminiExtractor(model="gemini-3.1-flash-lite")
         payload, tokens = extractor.extract_template(data=b"image", mime_type="image/png", document_name="ficha.png", template=template)
     assert tokens == 250
     assert extractor.last_metrics["input_tokens"] == 200
     assert payload["template_fields"][0]["value"] == "0008"
     config = client_class.return_value.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
+    assert client_class.return_value.models.generate_content.call_args.kwargs["model"] == "gemini-3.1-flash-lite"
 
 
 def test_preprocessamento_preserva_original_e_produz_derivado():
