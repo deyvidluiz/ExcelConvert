@@ -1,0 +1,19 @@
+[
+  {"field_id": "instalacao", "sheet_name": "Plan1", "cell_or_range": "C5", "expected_type": "text"},
+  {"field_id": "fabricante", "sheet_name": "Plan1", "cell_or_range": "I4", "expected_type": "text"},
+  {"field_id": "numero_serie", "sheet_name": "Plan1", "cell_or_range": "I6", "expected_type": "text"},
+  {"field_id": "tensao_nominal", "sheet_name": "Plan1", "cell_or_range": "P4", "expected_type": "text"},
+  {"field_id": "corrente_nominal", "sheet_name": "Plan1", "cell_or_range": "I7:I8", "expected_type": "text"},
+  {"field_id": "isolamento_cc_ensaio", "sheet_name": "Plan1", "cell_or_range": "B12", "expected_type": "text"},
+  {"field_id": "isolamento_cc_valor", "sheet_name": "Plan1", "cell_or_range": "D12", "expected_type": "decimal"},
+  {"field_id": "isolamento_cc_unidade", "sheet_name": "Plan1", "cell_or_range": "D13", "expected_type": "text"},
+  {"field_id": "terminais_secundarios", "sheet_name": "Plan1", "cell_or_range": "B14:B37", "expected_type": "text"},
+  {"field_id": "terminais_secundarios_valores", "sheet_name": "Plan1", "cell_or_range": "D14:D37", "expected_type": "text"},
+  {"field_id": "relacao_transformacao_terminal", "sheet_name": "Plan1", "cell_or_range": "E38:E43", "expected_type": "text"},
+  {"field_id": "resistencia_ohmica_terminal", "sheet_name": "Plan1", "cell_or_range": "E18:E37", "expected_type": "text"},
+  {"field_id": "resistencia_ohmica_valor", "sheet_name": "Plan1", "cell_or_range": "K18:K37", "expected_type": "decimal"},
+  {"field_id": "saturacao_ponto", "sheet_name": "Plan1", "cell_or_range": "O41:O43", "expected_type": "text"},
+  {"field_id": "observacoes", "sheet_name": "Plan1", "cell_or_range": "C53:C55", "expected_type": "text"},
+  {"field_id": "responsavel_ensaio", "sheet_name": "Plan1", "cell_or_range": "C56", "expected_type": "text"},
+  {"field_id": "data_ensaio", "sheet_name": "Plan1", "cell_or_range": "R56", "expected_type": "date"}
+]

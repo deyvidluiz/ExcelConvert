@@ -20,9 +20,11 @@ O disco contém `MEDIA_ROOT=/var/data/media`. As rotas de documentos exigem logi
 4. Mantenha `DEBUG=False`, `SECURE_SSL_REDIRECT=True` e aceite a `SECRET_KEY` gerada pelo Render.
 5. Adicione `GEMINI_API_KEY` somente como secret do serviço, se a extração visual for habilitada. Nunca coloque essa chave em `.env.example`, no Git ou no log.
 6. Confirme que `DATABASE_URL` aponta para o PostgreSQL criado e que `MEDIA_ROOT` aponta para o disco persistente.
-7. Faça um deploy e verifique `/health/`, login, upload, editor, exportação e histórico.
+7. Configure `EXCEL_TEMPLATE_PASSWORD` como secret do serviço. O arquivo Excel original deve ser disponibilizado somente em armazenamento privado; não o coloque no Git. Para inicialização automática, monte-o no caminho de `CEMIG_EXCEL_TEMPLATE_PATH` e mantenha `CEMIG_TEMPLATE_VERSION` igual à versão do catálogo.
+8. Se o arquivo ainda não estiver montado durante o build, cadastre-o uma vez pelo comando `import_excel_template` em um shell administrativo do serviço, usando o JSON de mapeamento versionado; não envie a senha na linha de comando.
+9. Faça um deploy e verifique `/health/`, login, upload, editor, exportação e histórico.
 
-O `build.sh` executa migrações, coleta estáticos e roda `register_cemig_template`. Isso cria o catálogo do modelo no banco sem precisar versionar o PDF de referência. Regiões de campos permanecem pendentes até a revisão humana do PDF real.
+O `build.sh` executa migrações, coleta estáticos e roda `register_cemig_template`. Isso cria o catálogo do modelo no banco sem precisar versionar o PDF de referência. Se `CEMIG_EXCEL_TEMPLATE_PATH` apontar para um arquivo privado já montado, o build também cadastra o Excel cifrado e o mapeamento confirmado de `modelos/data/cemig_excel_mapping.json`; se a variável estiver vazia, nenhuma planilha privada é criada. Regiões de campos permanecem pendentes até a revisão humana do PDF real.
 
 ## Variáveis
 
@@ -34,6 +36,10 @@ O `build.sh` executa migrações, coleta estáticos e roda `register_cemig_templ
 | `CSRF_TRUSTED_ORIGINS` | origens HTTPS completas separadas por vírgula |
 | `DATABASE_URL` | URL do PostgreSQL |
 | `MEDIA_ROOT` | `/var/data/media` no disco persistente |
+| `EXCEL_TEMPLATE_PASSWORD` | senha do modelo privado, somente como secret |
+| `CEMIG_EXCEL_TEMPLATE_PATH` | caminho privado opcional do modelo cifrado |
+| `CEMIG_EXCEL_TEMPLATE_NAME` | nome do modelo Excel cadastrado |
+| `CEMIG_EXCEL_TEMPLATE_VERSION` | versão do Excel; deve coincidir com o catálogo |
 | `GEMINI_API_KEY` | opcional; segredo do provedor |
 | `GEMINI_MODEL` | padrão `gemini-3.1-flash-lite` |
 | `MAX_UPLOAD_SIZE_MB` | limite por arquivo |
