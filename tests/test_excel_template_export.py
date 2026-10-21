@@ -84,3 +84,15 @@ def test_mapeamento_de_formula_e_rejeitado():
             {"template_fields": [{"field_id": "leituras", "value": "0012"}]},
             excel_template,
         )
+
+
+@pytest.mark.django_db
+def test_campo_ausente_na_extracao_nao_mantem_o_valor_do_arquivo_base():
+    excel_template = _template_with_range()
+    output = build_xlsx_from_template({"template_fields": []}, excel_template)
+    sheet = load_workbook(output, data_only=False)["Plan1"]
+
+    assert sheet["B3"].value is None
+    assert sheet["B4"].value is None
+    assert sheet["A1"].value == "=1+1"
+    assert sheet["B3"].fill.fgColor.rgb.endswith("FF0000")

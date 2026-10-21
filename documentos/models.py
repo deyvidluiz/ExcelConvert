@@ -5,6 +5,9 @@ from django.db import models
 
 
 class Document(models.Model):
+    #: Tentativas reais de processamento permitidas por documento.
+    MAX_ATTEMPTS = 3
+
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Aguardando processamento"
         PROCESSING = "processing", "Processando"
@@ -29,6 +32,14 @@ class Document(models.Model):
     input_token_count = models.PositiveIntegerField(default=0)
     output_token_count = models.PositiveIntegerField(default=0)
     api_call_count = models.PositiveIntegerField(default=0)
+    #: Chamadas iniciadas ao provedor, bem-sucedidas ou não.
+    api_attempt_count = models.PositiveIntegerField(default=0)
+    #: Falhas devolvidas pelo provedor, contabilizadas à parte das tentativas
+    #: de processamento do documento.
+    provider_failure_count = models.PositiveIntegerField(default=0)
+    #: Falso quando o provedor não informou consumo: o custo registrado é
+    #: desconhecido, não zero.
+    usage_reported = models.BooleanField(default=False)
     pages_processed = models.PositiveIntegerField(default=0)
     quality_score = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
     quality_warnings = models.JSONField(default=list, blank=True)
@@ -62,8 +73,36 @@ class Document(models.Model):
         return self.original_name
 
     @property
+    def attempts_exhausted(self):
+        """Indica se as tentativas reais de processamento já foram consumidas."""
+        return self.retry_count >= self.MAX_ATTEMPTS
+
+    @property
+    def attempts_remaining(self):
+        return max(self.MAX_ATTEMPTS - self.retry_count, 0)
+
+    @property
+    def is_processing(self):
+        return self.status == self.Status.PROCESSING
+
+    @property
+    def can_retry(self):
+        """Permite nova tentativa enquanto houver saldo e nada em andamento."""
+        return not self.attempts_exhausted and not self.is_processing
+
+    @property
+    def cost_is_known(self):
+        """Indica se o custo registrado pode ser apresentado como certo."""
+        return self.usage_reported or self.model == "local"
+
+    @property
     def is_image(self):
         return self.mime_type.startswith("image/")
+
+    @property
+    def is_pdf_digital(self):
+        """Indica o caminho local de PDFs; a extração decide se há texto/tabelas."""
+        return self.mime_type == "application/pdf"
 
 
 class ExtractionCache(models.Model):

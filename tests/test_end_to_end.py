@@ -112,7 +112,7 @@ def test_fluxo_integrado_mockado_login_upload_editor_excel_historico(client, use
     response = client.get(reverse("exportacao:download", args=[document.pk, "xlsx"]))
     assert response.status_code == 200
     workbook = load_workbook(io.BytesIO(response.content))
-    assert workbook["P1 T1"]["B4"].value == "0009"
+    assert workbook["Página 1"]["B4"].value == "0009"
 
     response = client.get(reverse("historico"))
     assert response.status_code == 200

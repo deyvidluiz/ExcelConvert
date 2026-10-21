@@ -80,3 +80,5 @@ de medições. A exportação deve aceitar intervalos somente quando a extraçã
 fornecer uma lista estruturada com o mesmo número de posições. Até essa
 ampliação, os campos marcados como revisão não serão escritos em células de
 fórmula nem convertidos heurísticamente.
+
+> A integração do modelo TCA ITMU, incluindo os destinos revisados célula por célula, está documentada em [MODELO_TCA_ITMU.md](MODELO_TCA_ITMU.md).

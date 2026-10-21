@@ -1,24 +1,32 @@
 import posixpath
 import re
 import zipfile
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
-from django.conf import settings
 
-from openpyxl import Workbook, load_workbook
+from django.conf import settings
+from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.cell import range_boundaries
-from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from docx import Document as WordDocument
 from docx.enum.section import WD_ORIENT
-from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Emu, Pt, RGBColor
+
+from extracao.schemas import CellFunction, normalise_layout_payload
+
+from .layout_export import build_xlsx_with_layout
+from .style_service import StyleConfig
 
 
 def extraction_for(document):
@@ -32,56 +40,105 @@ def extraction_for(document):
     return cache.payload
 
 
-def _value(cell):
-    if isinstance(cell, dict):
-        return cell.get("value")
-    return cell
+BOLD_FUNCTIONS = {CellFunction.TITLE.value, CellFunction.HEADER.value, CellFunction.SUBHEADER.value}
+CENTERED_FUNCTIONS = {CellFunction.TITLE.value, CellFunction.HEADER.value}
 
 
-def _tables(payload):
-    for page in payload.get("pages", []):
-        for table in page.get("tables", []):
-            yield page, table
+def _layout_pages(payload):
+    """Normaliza o payload para que Word e PDF leiam o mesmo contrato do XLSX."""
+    return normalise_layout_payload(payload).get("pages") or []
 
 
-def build_xlsx(payload):
-    workbook = Workbook()
-    workbook.remove(workbook.active)
-    thin = Side(style="thin", color="D7DEE8")
-    for index, (page, table) in enumerate(_tables(payload), start=1):
-        sheet = workbook.create_sheet(title=f"P{page.get('page_number', index)} T{index}"[:31])
-        title = table.get("title") or f"Página {page.get('page_number', index)}"
-        sheet.cell(1, 1, title).font = Font(bold=True, size=13, color="182230")
-        headers = table.get("headers", [])
-        rows = table.get("rows", [])
-        for col, cell in enumerate(headers, start=1):
-            target = sheet.cell(3, col, _value(cell))
-            target.font = Font(bold=True, color="FFFFFF")
-            target.fill = PatternFill("solid", fgColor="3C5CCF")
-            target.alignment = Alignment(horizontal="center", vertical="center")
-        for row_index, row in enumerate(rows, start=4):
-            for col, cell in enumerate(row, start=1):
-                target = sheet.cell(row_index, col, _value(cell))
-                target.number_format = "@"
-                target.quotePrefix = True
-                target.alignment = Alignment(vertical="top", wrap_text=True)
-        for row in sheet.iter_rows(min_row=3, max_row=max(3, sheet.max_row), min_col=1, max_col=max(1, sheet.max_column)):
-            for cell in row:
-                cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
-        for col in range(1, max(1, sheet.max_column) + 1):
-            sheet.column_dimensions[get_column_letter(col)].width = 20
-        for merged in table.get("merged_cells", []):
-            try:
-                sheet.merge_cells(merged)
-            except ValueError:
-                pass
-        sheet.freeze_panes = "A4"
-    if not workbook.worksheets:
-        workbook.create_sheet("Sem tabelas")
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-    return output
+def _is_landscape(pages):
+    for page in pages:
+        width = page.get("page_width") or 0
+        height = page.get("page_height") or 0
+        if width and height:
+            return width > height
+    # Sem geometria, mantém a paisagem usada pelas versões anteriores.
+    return True
+
+
+def _split_regions(page):
+    regions = [region for region in page.get("regions") or [] if (region.get("value") or "").strip()]
+    leading = [region for region in regions if region.get("function") != CellFunction.FOOTER.value]
+    trailing = [region for region in regions if region.get("function") == CellFunction.FOOTER.value]
+    return leading, trailing
+
+
+def _span(value):
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _spanned_matrix(table):
+    """Distribui as células numa matriz, reservando as áreas mescladas."""
+    lines = []
+    if table.get("headers"):
+        lines.append((CellFunction.HEADER.value, table["headers"]))
+    for row in table.get("rows") or []:
+        lines.append((CellFunction.DATA.value, row))
+
+    placements = []
+    occupied = set()
+    columns = 1
+    rows = len(lines)
+    for row_index, (default, line) in enumerate(lines):
+        col_index = 0
+        for raw in line:
+            cell = dict(raw) if isinstance(raw, dict) else {"value": raw}
+            cell["function"] = cell.get("function") or default
+            while (row_index, col_index) in occupied:
+                col_index += 1
+            row_span = _span(cell.get("row_span"))
+            col_span = _span(cell.get("col_span"))
+            for row_offset in range(row_span):
+                for col_offset in range(col_span):
+                    occupied.add((row_index + row_offset, col_index + col_offset))
+            placements.append((row_index, col_index, row_span, col_span, cell))
+            columns = max(columns, col_index + col_span)
+            rows = max(rows, row_index + row_span)
+            col_index += col_span
+
+    if not placements:
+        return [], [], columns
+
+    matrix = [[None] * columns for _ in range(rows)]
+    spans = []
+    for row_index, col_index, row_span, col_span, cell in placements:
+        matrix[row_index][col_index] = cell
+        if row_span > 1 or col_span > 1:
+            spans.append((row_index, col_index, row_index + row_span - 1, col_index + col_span - 1))
+    return matrix, spans, columns
+
+
+def _column_shares(table, columns):
+    """Proporção de largura por coluna, vinda da geometria quando existir."""
+    values = table.get("column_widths") or table.get("column_widths_relative") or []
+    numbers = [max(0.0, float(value or 0)) for value in list(values)[:columns]]
+    numbers += [0.0] * max(0, columns - len(numbers))
+    total = sum(numbers)
+    if not total:
+        return [1 / columns] * columns
+    numbers = [value or total / columns for value in numbers]
+    total = sum(numbers)
+    return [value / total for value in numbers]
+
+
+def build_xlsx(payload, *, style_config=None):
+    """Exporta o payload estruturado; payloads antigos recebem layout compatível."""
+    return build_xlsx_with_layout(payload, config=style_config)
+
+
+def style_config_for(document):
+    """Prioriza os estilos do modelo Excel associado ao tipo de ficha."""
+    if getattr(document, "template_id", None):
+        excel_template = document.template.excel_templates.filter(is_active=True).order_by("-created_at").first()
+        if excel_template:
+            return StyleConfig.from_excel_template(excel_template)
+    return StyleConfig.from_settings()
 
 
 def build_xlsx_from_template(payload, excel_template):
@@ -90,24 +147,92 @@ def build_xlsx_from_template(payload, excel_template):
     keep_vba = Path(excel_template.workbook.name or "").suffix.lower() == ".xlsm"
     workbook = _load_template_workbook(raw_template, keep_vba=keep_vba)
     mappings = {mapping.field.field_id: mapping for mapping in excel_template.mappings.select_related("field")}
-    written_cells = set()
+    touched_cells = set()
+    extracted = {}
     for field in payload.get("template_fields", []):
         mapping = mappings.get(field.get("field_id"))
         if not mapping or mapping.sheet_name not in workbook.sheetnames:
             continue
+        extracted[field.get("field_id")] = True
         cells = _mapping_cells(workbook[mapping.sheet_name], mapping.cell_or_range)
         values = _values_for_cells(field.get("value"), len(cells), field.get("field_id"))
         for cell, value in zip(cells, values):
             if cell.data_type == "f":
                 raise ValueError("O mapeamento {} aponta para uma fórmula em {}.".format(field.get("field_id"), cell.coordinate))
-            cell.value = value
-            written_cells.add((mapping.sheet_name, cell.coordinate))
+            cell.value = _coerce_expected_type(value, mapping.expected_type)
+            touched_cells.add((mapping.sheet_name, cell.coordinate))
+    touched_cells |= _clear_unextracted_mappings(workbook, mappings, extracted)
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
     preserved_output = _preserve_template_parts(_decrypt_template_bytes(raw_template), output.getvalue())
-    _validate_saved_template(raw_template, preserved_output, keep_vba=keep_vba, written_cells=written_cells)
+    _validate_saved_template(raw_template, preserved_output, keep_vba=keep_vba, touched_cells=touched_cells)
     return BytesIO(preserved_output)
+
+
+NUMERIC_EXPECTED_TYPES = {"number", "decimal"}
+# Inteiro, decimal com um único separador, ou milhar com ponto e decimal com vírgula.
+_NUMERIC_TEXT = re.compile(r"-?\d{1,3}(?:\.\d{3})+,\d+|-?\d+[.,]\d+|-?\d+")
+
+
+def _coerce_expected_type(value, expected_type):
+    """Campo numérico vira número; o resto é gravado exatamente como foi lido.
+
+    As fórmulas da ficha comparam e procuram valores numéricos: um "10" ou um
+    "31,6" gravados como texto fazem `K44=10` dar falso e o `VLOOKUP` da correção
+    de temperatura cair na última faixa sem avisar. Só converte o que é
+    inequivocamente numérico: ">5000000", "300x600 - 5A" e datas seguem texto.
+    """
+    if expected_type not in NUMERIC_EXPECTED_TYPES or not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not _NUMERIC_TEXT.fullmatch(text):
+        return value
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    return float(text) if "." in text else int(text)
+
+
+def _clear_unextracted_mappings(workbook, mappings, extracted):
+    """Campo sem valor na extração não pode herdar o dado do arquivo-base."""
+    cleared = set()
+    for field_id, mapping in mappings.items():
+        if field_id in extracted or mapping.sheet_name not in workbook.sheetnames:
+            continue
+        for cell in _mapping_cells(workbook[mapping.sheet_name], mapping.cell_or_range):
+            if cell.data_type == "f" or cell.value is None:
+                continue
+            cell.value = None
+            cleared.add((mapping.sheet_name, cell.coordinate))
+    return cleared
+
+
+def build_cleaned_workbook(raw_template, targets):
+    """Copia o modelo esvaziando apenas os destinos variáveis informados.
+
+    Rótulos, títulos, fórmulas, estilos, mesclagens, dimensões, área de impressão
+    e tabelas auxiliares seguem intactos: só as células recebidas ficam vazias.
+    """
+    decrypted = _decrypt_template_bytes(raw_template)
+    workbook = load_workbook(BytesIO(decrypted), data_only=False)
+    cleared = set()
+    for sheet_name, coordinate in targets:
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError("O modelo não tem a aba {}.".format(sheet_name))
+        cell = workbook[sheet_name][coordinate]
+        if isinstance(cell, MergedCell):
+            raise ValueError("{}!{} é célula mesclada secundária.".format(sheet_name, coordinate))
+        if cell.data_type == "f":
+            raise ValueError("{}!{} contém fórmula e não pode ser esvaziada.".format(sheet_name, coordinate))
+        if cell.value is None:
+            continue
+        cell.value = None
+        cleared.add((sheet_name, cell.coordinate))
+    output = BytesIO()
+    workbook.save(output)
+    preserved = _preserve_template_parts(decrypted, output.getvalue())
+    _validate_saved_template(decrypted, preserved, keep_vba=False, touched_cells=cleared)
+    return preserved, cleared
 
 
 def _decrypt_template_bytes(raw_template):
@@ -254,7 +379,13 @@ def _preserve_template_parts(raw_template, output):
     return restored.getvalue()
 
 
-def _workbook_signature(workbook):
+def _workbook_signature(workbook, *, touched=()):
+    """Assina estrutura e fórmulas. Os destinos tocados saem da conta da dimensão."""
+    for sheet_name, coordinate in touched:
+        if sheet_name in workbook.sheetnames:
+            cell = workbook[sheet_name][coordinate]
+            if not isinstance(cell, MergedCell):
+                cell.value = None
     formulas = {}
     sheets = {}
     for sheet in workbook.worksheets:
@@ -276,65 +407,238 @@ def _workbook_signature(workbook):
     return {"sheetnames": list(workbook.sheetnames), "sheets": sheets, "formulas": formulas}
 
 
-def _validate_saved_template(raw_template, output, *, keep_vba, written_cells):
-    before = _workbook_signature(_load_template_workbook(raw_template, keep_vba=keep_vba))
+def _validate_saved_template(raw_template, output, *, keep_vba, touched_cells):
+    before = _workbook_signature(_load_template_workbook(raw_template, keep_vba=keep_vba), touched=touched_cells)
     after_workbook = load_workbook(BytesIO(output), keep_vba=keep_vba, data_only=False)
-    after = _workbook_signature(after_workbook)
+    after = _workbook_signature(after_workbook, touched=touched_cells)
     if before["sheetnames"] != after["sheetnames"] or before["sheets"] != after["sheets"]:
         raise ValueError("A exportação alterou a estrutura, mesclagens, impressão ou dimensões do modelo.")
     if before["formulas"] != after["formulas"]:
         raise ValueError("A exportação alterou fórmulas existentes no modelo.")
 
 
-def build_docx(payload):
+def build_docx(payload, *, style_config=None):
+    """Gera o Word com a mesma paleta e os mesmos papéis visuais do XLSX."""
+    config = style_config or StyleConfig.from_settings()
+    pages = _layout_pages(payload)
     document = WordDocument()
     section = document.sections[0]
-    section.orientation = WD_ORIENT.LANDSCAPE
-    section.page_width, section.page_height = section.page_height, section.page_width
-    for index, (page, table_data) in enumerate(_tables(payload), start=1):
-        if index > 1:
+    if _is_landscape(pages):
+        section.orientation = WD_ORIENT.LANDSCAPE
+        section.page_width, section.page_height = section.page_height, section.page_width
+    usable = section.page_width - section.left_margin - section.right_margin
+
+    written = False
+    for page in pages:
+        if written:
             document.add_page_break()
-        document.add_heading(table_data.get("title") or f"Página {page.get('page_number', index)}", level=2)
-        headers = [_value(cell) or "" for cell in table_data.get("headers", [])]
-        rows = [[_value(cell) or "" for cell in row] for row in table_data.get("rows", [])]
-        table = document.add_table(rows=1, cols=max(1, len(headers)))
-        table.style = "Table Grid"
-        for cell, value in zip(table.rows[0].cells, headers):
-            cell.text = str(value)
-        for row in rows:
-            cells = table.add_row().cells
-            for cell, value in zip(cells, row):
-                cell.text = str(value)
+        leading, trailing = _split_regions(page)
+        written = _docx_regions(document, leading, config) or written
+        for table in page.get("tables") or []:
+            if table.get("title"):
+                _docx_paragraph(document, table["title"], CellFunction.TITLE.value, config)
+            written = _docx_table(document, table, config, usable) or written
+        written = _docx_regions(document, trailing, config) or written
+
+    if not written:
+        _docx_paragraph(document, "Nenhuma tabela ou texto foi identificado no documento.", CellFunction.REVIEW.value, config)
     output = BytesIO()
     document.save(output)
     output.seek(0)
     return output
 
 
-def build_pdf(payload):
+def _docx_regions(document, regions, config):
+    for region in regions:
+        _docx_paragraph(
+            document,
+            region.get("value") or "",
+            region.get("function") or CellFunction.DATA.value,
+            config,
+            alignment=region.get("alignment"),
+        )
+    return bool(regions)
+
+
+def _docx_paragraph(document, text, function, config, *, alignment=None):
+    paragraph = document.add_paragraph()
+    paragraph.alignment = _docx_alignment(function, alignment)
+    _docx_write_runs(paragraph, text, function, config)
+    colours = config.colours_for(function)
+    if colours["background"] != "FFFFFF":
+        _shade(paragraph._p.get_or_add_pPr(), colours["background"])
+    return paragraph
+
+
+def _docx_table(document, table, config, usable):
+    matrix, spans, width = _spanned_matrix(table)
+    if not matrix:
+        return False
+    word_table = document.add_table(rows=len(matrix), cols=width)
+    word_table.style = "Table Grid" if table.get("has_borders", True) else "Normal Table"
+    word_table.autofit = False
+
+    for row_index, line in enumerate(matrix):
+        for col_index, cell in enumerate(line):
+            target = word_table.cell(row_index, col_index)
+            function = (cell or {}).get("function") or CellFunction.EMPTY.value
+            colours = config.colours_for(function)
+            paragraph = target.paragraphs[0]
+            paragraph.alignment = _docx_alignment(function, (cell or {}).get("alignment"))
+            _docx_write_runs(paragraph, (cell or {}).get("value") or "", function, config)
+            if colours["background"] != "FFFFFF":
+                _shade(target._tc.get_or_add_tcPr(), colours["background"])
+
+    # As larguras vêm antes da mesclagem: depois, a célula mesclada cobre várias colunas.
+    for col_index, share in enumerate(_column_shares(table, width)):
+        size = Emu(int(usable * share))
+        word_table.columns[col_index].width = size
+        for row in word_table.rows:
+            if col_index < len(row.cells):
+                row.cells[col_index].width = size
+
+    for start_row, start_col, end_row, end_col in spans:
+        word_table.cell(start_row, start_col).merge(word_table.cell(end_row, end_col))
+    return True
+
+
+def _docx_write_runs(paragraph, text, function, config):
+    """Preserva quebras de linha do valor original em um único parágrafo."""
+    colours = config.colours_for(function)
+    lines = str(text or "").split("\n")
+    for index, line in enumerate(lines):
+        run = paragraph.add_run(line)
+        run.font.size = Pt(9)
+        run.font.bold = function in BOLD_FUNCTIONS
+        run.font.color.rgb = RGBColor.from_string(colours["foreground"])
+        if index < len(lines) - 1:
+            run.add_break()
+
+
+def _docx_alignment(function, alignment):
+    horizontal = alignment if alignment in {"left", "center", "right"} else None
+    if horizontal is None:
+        horizontal = "center" if function in CENTERED_FUNCTIONS else "left"
+    return {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }[horizontal]
+
+
+def _shade(properties, colour):
+    element = OxmlElement("w:shd")
+    element.set(qn("w:val"), "clear")
+    element.set(qn("w:color"), "auto")
+    element.set(qn("w:fill"), colour)
+    properties.append(element)
+
+
+def build_pdf(payload, *, style_config=None):
+    """Gera o PDF com a mesma paleta e os mesmos papéis visuais do XLSX."""
+    config = style_config or StyleConfig.from_settings()
+    pages = _layout_pages(payload)
     output = BytesIO()
-    doc = SimpleDocTemplate(output, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm)
-    styles = getSampleStyleSheet()
+    pagesize = landscape(A4) if _is_landscape(pages) else A4
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=pagesize,
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
+    )
     story = []
-    for index, (page, table_data) in enumerate(_tables(payload), start=1):
-        if index > 1:
+    for page in pages:
+        if story:
             story.append(PageBreak())
-        story.extend([Paragraph(str(table_data.get("title") or f"Página {page.get('page_number', index)}"), styles["Heading2"]), Spacer(1, 5 * mm)])
-        data = [[str(_value(cell) or "") for cell in table_data.get("headers", [])]]
-        data.extend([[str(_value(cell) or "") for cell in row] for row in table_data.get("rows", [])])
-        if not data[0]:
-            data = [["Sem dados"]]
-        table = Table(data, repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3C5CCF")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D7DEE8")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(table)
+        leading, trailing = _split_regions(page)
+        story.extend(_pdf_regions(leading, config, doc.width))
+        for table in page.get("tables") or []:
+            if table.get("title"):
+                story.extend(_pdf_regions([{"value": table["title"], "function": CellFunction.TITLE.value}], config, doc.width))
+            flowable = _pdf_table(table, config, doc.width)
+            if flowable is not None:
+                story.extend([flowable, Spacer(1, 4 * mm)])
+        story.extend(_pdf_regions(trailing, config, doc.width))
+
     if not story:
-        story.append(Paragraph("Nenhuma tabela encontrada.", styles["BodyText"]))
+        story.append(Paragraph("Nenhuma tabela ou texto foi identificado no documento.", _pdf_style(CellFunction.REVIEW.value, config)))
     doc.build(story)
     output.seek(0)
     return output
+
+
+def _pdf_regions(regions, config, width):
+    """Cada texto solto vira uma faixa com o fundo do seu papel visual."""
+    flowables = []
+    for region in regions:
+        function = region.get("function") or CellFunction.DATA.value
+        style = _pdf_style(function, config, alignment=region.get("alignment"))
+        colours = config.colours_for(function)
+        paragraph = Paragraph(_pdf_text(region.get("value")), style)
+        if colours["background"] == "FFFFFF":
+            flowables.extend([paragraph, Spacer(1, 2 * mm)])
+            continue
+        banner = Table([[paragraph]], colWidths=[width])
+        banner.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#" + colours["background"])),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        flowables.extend([banner, Spacer(1, 2 * mm)])
+    return flowables
+
+
+def _pdf_table(table, config, width):
+    matrix, spans, columns = _spanned_matrix(table)
+    if not matrix:
+        return None
+    data = []
+    commands = [("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
+    for row_index, line in enumerate(matrix):
+        row = []
+        for col_index, cell in enumerate(line):
+            function = (cell or {}).get("function") or CellFunction.EMPTY.value
+            colours = config.colours_for(function)
+            row.append(Paragraph(_pdf_text((cell or {}).get("value")), _pdf_style(function, config, alignment=(cell or {}).get("alignment"))))
+            if colours["background"] != "FFFFFF":
+                commands.append(("BACKGROUND", (col_index, row_index), (col_index, row_index), colors.HexColor("#" + colours["background"])))
+        data.append(row)
+
+    for start_row, start_col, end_row, end_col in spans:
+        commands.append(("SPAN", (start_col, start_row), (end_col, end_row)))
+
+    if table.get("has_borders", True):
+        commands.append(("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + StyleConfig.BORDER_COLOR)))
+    elif table.get("headers"):
+        commands.append(("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.HexColor("#" + StyleConfig.ACCENT_BORDER_COLOR)))
+
+    flowable = Table(
+        data,
+        colWidths=[width * share for share in _column_shares(table, columns)],
+        repeatRows=1 if table.get("headers") else 0,
+    )
+    flowable.setStyle(TableStyle(commands))
+    return flowable
+
+
+def _pdf_style(function, config, *, alignment=None):
+    colours = config.colours_for(function)
+    horizontal = alignment if alignment in {"left", "center", "right"} else None
+    if horizontal is None:
+        horizontal = "center" if function in CENTERED_FUNCTIONS else "left"
+    return ParagraphStyle(
+        "cell-{}-{}".format(function, horizontal),
+        fontName="Helvetica-Bold" if function in BOLD_FUNCTIONS else "Helvetica",
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#" + colours["foreground"]),
+        alignment={"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}[horizontal],
+    )
+
+
+def _pdf_text(value):
+    return escape(str(value if value is not None else "")).replace("\n", "<br/>")

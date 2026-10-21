@@ -14,3 +14,5 @@ preflight-review/
 .idea/
 .vscode/
 TCA VÃO 217F - ITMU.xlsx
+# Pacote de referência do modelo TCA ITMU: contém os dados de um ensaio real.
+molds/

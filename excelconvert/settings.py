@@ -128,7 +128,19 @@ LOGOUT_REDIRECT_URL = "login"
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 EXCEL_TEMPLATE_PASSWORD = os.getenv("EXCEL_TEMPLATE_PASSWORD", "")
-EXTRACTION_PROMPT_VERSION = "2026-10-12.2"
+
+# Paleta aplicada por função visual na exportação XLSX. Independe das cores do
+# documento de origem: uma ficha fotografada em preto e branco sai igual à
+# colorida. Pode ser sobreposta por EXCEL_PALETTE_JSON no ambiente.
+EXCEL_PALETTE = {
+    "title": {"background": "1F4E79", "foreground": "FFFFFF"},
+    "header": {"background": "3C5CCF", "foreground": "FFFFFF"},
+    "subheader": {"background": "9DC3E6", "foreground": "182230"},
+    "data": {"background": "FFFFFF", "foreground": "000000"},
+    "review": {"background": "FFF2CC", "foreground": "7F5F00"},
+    "footer": {"background": "E7E6E6", "foreground": "000000"},
+    "empty": {"background": "FFFFFF", "foreground": "000000"},
+}
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024 * MAX_UPLOAD_FILES + 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024

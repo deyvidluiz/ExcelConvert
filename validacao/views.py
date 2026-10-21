@@ -6,16 +6,18 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 
 from documentos.models import Document, ExtractionCache
-from .services import validate_payload
+from .services import merge_reviewed_values, validate_payload
+from extracao.schemas import normalise_layout_payload
 
 
 def _load_payload(document):
+    """Sempre devolve o contrato compartilhado, inclusive para extrações antigas."""
     if document.extraction_payload:
-        return document.extraction_payload
+        return normalise_layout_payload(document.extraction_payload)
     cache = ExtractionCache.objects.filter(sha256=document.sha256).order_by("-created_at").first()
     if cache:
-        return cache.payload
-    return {"document_name": document.original_name, "pages": [], "alerts": []}
+        return normalise_layout_payload(cache.payload)
+    return normalise_layout_payload({"document_name": document.original_name})
 
 
 @login_required
@@ -27,8 +29,9 @@ def editor(request, pk):
     payload = _load_payload(document)
     if request.method == "POST":
         try:
-            candidate = json.loads(request.POST.get("payload", "{}"))
-            candidate["alerts"] = list(dict.fromkeys(candidate.get("alerts", []) + validate_payload(candidate)))
+            submitted = json.loads(request.POST.get("payload", "{}"))
+            candidate = merge_reviewed_values(payload, submitted)
+            candidate["alerts"] = list(dict.fromkeys(validate_payload(candidate)))
             document.extraction_payload = candidate
             document.save(update_fields=["extraction_payload", "updated_at"])
             payload = candidate

@@ -14,6 +14,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const processForm = document.querySelector('[data-process-form]');
+  if (processForm) {
+    processForm.addEventListener('submit', event => {
+      if (processForm.dataset.submitted) {
+        event.preventDefault();
+        return;
+      }
+      processForm.dataset.submitted = '1';
+      const button = processForm.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = 'Processando… <i data-lucide="loader-circle"></i>';
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+
   document.querySelectorAll('.sheet-tab').forEach(tab => tab.addEventListener('click', () => {
     document.querySelectorAll('.sheet-tab').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.sheet-page').forEach(item => item.classList.add('hidden'));
@@ -37,6 +54,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (field) field.value = value;
           }
         });
+      });
+      document.querySelectorAll('[data-kind="region"]').forEach(item => {
+        const page = payload.pages[Number(item.dataset.pageIndex)];
+        const region = page && page.regions && page.regions[Number(item.dataset.regionIndex)];
+        if (region) region.value = item.innerText.trim() || null;
       });
       document.querySelector('#payload').value = JSON.stringify(payload);
       const indicator = document.querySelector('#save-indicator');
